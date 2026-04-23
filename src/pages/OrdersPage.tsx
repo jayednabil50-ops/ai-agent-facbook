@@ -128,9 +128,6 @@ const OrdersPage = () => {
                 'Casstomer Number',
                 'Casstomer Address',
                 'Product Name',
-                'SKU',
-                'Size',
-                'Amount',
                 'Status',
               ];
               const csvRows = [
@@ -143,9 +140,6 @@ const OrdersPage = () => {
                     o.customerPhone,
                     `"${o.address || ''}"`,
                     `"${o.items[0]?.name || ''}"`,
-                    o.sku || '',
-                    o.productSize || '',
-                    o.amount,
                     o.status,
                   ].join(','),
                 ),
@@ -223,9 +217,6 @@ const OrdersPage = () => {
               <TableHead>Casstomer Number</TableHead>
               <TableHead>Casstomer Address</TableHead>
               <TableHead>Product Name</TableHead>
-              <TableHead>SKU</TableHead>
-              <TableHead>Size</TableHead>
-              <TableHead>{t('orders.amount')}</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Invoice</TableHead>
             </TableRow>
@@ -234,7 +225,7 @@ const OrdersPage = () => {
             {isLoading ? (
               Array.from({ length: 3 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 11 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-5 w-full" />
                     </TableCell>
@@ -243,13 +234,13 @@ const OrdersPage = () => {
               ))
             ) : isError ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-8 text-destructive">
+                <TableCell colSpan={8} className="text-center py-8 text-destructive">
                   Failed to load order data: {(error as Error)?.message || 'Unknown error'}
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   No order found
                 </TableCell>
               </TableRow>
@@ -262,9 +253,6 @@ const OrdersPage = () => {
                   <TableCell className="text-sm">{order.customerPhone || '-'}</TableCell>
                   <TableCell className="text-xs max-w-[220px] truncate">{order.address || '-'}</TableCell>
                   <TableCell className="text-sm">{order.items[0]?.name || 'Unknown Product'}</TableCell>
-                  <TableCell className="text-xs font-mono">{order.sku || '-'}</TableCell>
-                  <TableCell className="text-xs">{order.productSize || '-'}</TableCell>
-                  <TableCell className="font-medium">BDT {order.amount.toLocaleString()}</TableCell>
                   <TableCell onClick={e => e.stopPropagation()}>
                     <Select
                       value={order.status}
