@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Papa from 'papaparse';
 import { supabase } from '@/integrations/supabase/client';
@@ -16,8 +17,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Package, Plus, Pencil, Trash2, RefreshCw, Search, X, Upload, Sparkles, CheckCircle2, AlertCircle, Loader2, Clock } from 'lucide-react';
+import { Package, Plus, Pencil, Trash2, RefreshCw, Search, X, Upload, Sparkles, CheckCircle2, AlertCircle, Loader2, Clock, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 type EmbedStatus = 'pending' | 'processing' | 'ready' | 'error';
 
@@ -38,6 +40,155 @@ interface Product {
   embed_status?: EmbedStatus;
   embed_error?: string | null;
   embedded_at?: string | null;
+}
+
+type EditableProductField =
+  | 'category'
+  | 'name'
+  | 'sku'
+  | 'price'
+  | 'capacity'
+  | 'burner_size'
+  | 'height'
+  | 'includes'
+  | 'material'
+  | 'fan_type'
+  | 'image_url'
+  | 'video_url';
+
+const bnDigitMap: Record<string, string> = {
+  '০': '0',
+  '১': '1',
+  '২': '2',
+  '৩': '3',
+  '৪': '4',
+  '৫': '5',
+  '৬': '6',
+  '৭': '7',
+  '৮': '8',
+  '৯': '9',
+};
+
+const normalizeNumberInput = (value: string) =>
+  value
+    .replace(/[০-৯]/g, digit => bnDigitMap[digit] ?? digit)
+    .replace(/[৳,\s]/g, '')
+    .trim();
+
+function displayCellValue(value: string | number | null | undefined, fallback = '-') {
+  if (value === null || value === undefined || value === '') return fallback;
+  return String(value);
+}
+
+function EditableCell({
+  value,
+  display,
+  fieldLabel,
+  required,
+  link,
+  className,
+  onSave,
+}: {
+  value: string;
+  display?: ReactNode;
+  fieldLabel: string;
+  required?: boolean;
+  link?: string | null;
+  className?: string;
+  onSave: (nextValue: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [editing, value]);
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (required && !next) {
+      toast.error(`${fieldLabel} is required`);
+      return;
+    }
+    if (next === value) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(next);
+      setEditing(false);
+    } catch {
+      // The mutation already shows the user-facing error toast.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className="flex min-w-[150px] items-center gap-1">
+        <Input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit();
+            }
+            if (e.key === 'Escape') {
+              setDraft(value);
+              setEditing(false);
+            }
+          }}
+          className="h-8 min-w-0 text-xs"
+          aria-label={fieldLabel}
+        />
+        <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" disabled={saving} onClick={commit}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          disabled={saving}
+          onClick={() => {
+            setDraft(value);
+            setEditing(false);
+          }}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn('group flex min-w-[110px] items-center gap-1.5', className)}>
+      <div className="min-w-0 flex-1 truncate" title={String(value || '')}>
+        {link ? (
+          <a href={link} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            {display || link}
+          </a>
+        ) : (
+          display || displayCellValue(value)
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+        title={`Edit ${fieldLabel}`}
+        onClick={() => setEditing(true)}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
 }
 
 function EmbedBadge({ status, error }: { status?: EmbedStatus; error?: string | null }) {
@@ -143,6 +294,48 @@ const ProductsPage = () => {
       if (newId) triggerEmbed(newId);
     },
     onError: (e: any) => toast.error(e?.message || 'Failed to save'),
+  });
+
+  const inlineUpdateMutation = useMutation({
+    mutationFn: async ({
+      productId,
+      field,
+      rawValue,
+    }: {
+      productId: string;
+      field: EditableProductField;
+      rawValue: string;
+    }) => {
+      const value = rawValue.trim();
+      if (field === 'name' && !value) {
+        throw new Error('Name is required');
+      }
+
+      const values: Partial<Product> = {};
+      if (field === 'price') {
+        if (!value) {
+          values.price = null;
+        } else {
+          const parsed = Number(normalizeNumberInput(value));
+          if (!Number.isFinite(parsed)) {
+            throw new Error('Price must be a valid number');
+          }
+          values.price = parsed;
+        }
+      } else {
+        (values as Record<EditableProductField, string | null>)[field] = value || null;
+      }
+
+      const { error } = await supabase.from('products' as any).update(values).eq('id', productId);
+      if (error) throw error;
+      await triggerEmbed(productId);
+      return productId;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Product updated and embedding refreshed');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Failed to update product'),
   });
 
   const deleteMutation = useMutation({
@@ -258,6 +451,10 @@ const ProductsPage = () => {
       video_url: form.video_url || null,
     };
     upsertMutation.mutate({ id: editing?.id, values });
+  };
+
+  const saveProductCell = (productId: string, field: EditableProductField) => async (rawValue: string) => {
+    await inlineUpdateMutation.mutateAsync({ productId, field, rawValue });
   };
 
   const filtered = products.filter(p => {
@@ -394,21 +591,46 @@ const ProductsPage = () => {
                   )}
                 </TableCell>
                 <TableCell><EmbedBadge status={p.embed_status} error={p.embed_error} /></TableCell>
-                <TableCell className="text-sm">{p.category || '-'}</TableCell>
-                <TableCell className="text-sm font-medium">{p.name}</TableCell>
-                <TableCell className="text-sm">{p.sku || '-'}</TableCell>
-                <TableCell className="text-sm font-medium">{p.price != null ? `৳${Number(p.price).toLocaleString()}` : '-'}</TableCell>
-                <TableCell className="text-sm">{p.capacity || '-'}</TableCell>
-                <TableCell className="text-sm">{p.burner_size || '-'}</TableCell>
-                <TableCell className="text-sm">{p.height || '-'}</TableCell>
-                <TableCell className="text-xs max-w-[160px] truncate" title={p.includes || ''}>{p.includes || '-'}</TableCell>
-                <TableCell className="text-sm">{p.material || '-'}</TableCell>
-                <TableCell className="text-sm">{p.fan_type || '-'}</TableCell>
-                <TableCell className="text-xs max-w-[140px] truncate">
-                  {p.image_url ? <a href={p.image_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{p.image_url}</a> : '-'}
+                <TableCell className="text-sm">
+                  <EditableCell value={p.category || ''} fieldLabel="Category" onSave={saveProductCell(p.id, 'category')} />
                 </TableCell>
-                <TableCell className="text-xs max-w-[140px] truncate">
-                  {p.video_url ? <a href={p.video_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{p.video_url}</a> : '-'}
+                <TableCell className="text-sm font-medium">
+                  <EditableCell value={p.name || ''} fieldLabel="Name" required onSave={saveProductCell(p.id, 'name')} />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <EditableCell value={p.sku || ''} fieldLabel="SKU / Code" onSave={saveProductCell(p.id, 'sku')} />
+                </TableCell>
+                <TableCell className="text-sm font-medium">
+                  <EditableCell
+                    value={p.price != null ? String(p.price) : ''}
+                    display={p.price != null ? `৳${Number(p.price).toLocaleString()}` : '-'}
+                    fieldLabel="Price"
+                    onSave={saveProductCell(p.id, 'price')}
+                  />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <EditableCell value={p.capacity || ''} fieldLabel="Capacity" onSave={saveProductCell(p.id, 'capacity')} />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <EditableCell value={p.burner_size || ''} fieldLabel="Burner Size" onSave={saveProductCell(p.id, 'burner_size')} />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <EditableCell value={p.height || ''} fieldLabel="Height" onSave={saveProductCell(p.id, 'height')} />
+                </TableCell>
+                <TableCell className="text-xs max-w-[180px]">
+                  <EditableCell value={p.includes || ''} fieldLabel="Includes" onSave={saveProductCell(p.id, 'includes')} />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <EditableCell value={p.material || ''} fieldLabel="Material" onSave={saveProductCell(p.id, 'material')} />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <EditableCell value={p.fan_type || ''} fieldLabel="Fan Type" onSave={saveProductCell(p.id, 'fan_type')} />
+                </TableCell>
+                <TableCell className="text-xs max-w-[160px]">
+                  <EditableCell value={p.image_url || ''} display={p.image_url || '-'} fieldLabel="Image URL" link={p.image_url} onSave={saveProductCell(p.id, 'image_url')} />
+                </TableCell>
+                <TableCell className="text-xs max-w-[160px]">
+                  <EditableCell value={p.video_url || ''} display={p.video_url || '-'} fieldLabel="Video URL" link={p.video_url} onSave={saveProductCell(p.id, 'video_url')} />
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
